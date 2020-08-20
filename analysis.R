@@ -1,3 +1,7 @@
+# bootstrapped slope figure needs labels "A", "B", "C"
+# report stats from lm on beta slopes
+# add units into figures (km)
+
 library(data.table)
 library(ecolFudge)
 library(hillR)
@@ -8,6 +12,7 @@ library(MASS)
 library(modEvA)
 library(ggplot2)
 library(ggparl) #  boxplot/jitter plot hybrids
+library(paletteer)
 library(sf)
 library(viridis)
 library(ggrepel)
@@ -122,8 +127,13 @@ libPlot <- ggplot(libSizes, aes(x = taxon, y = libSize)) +
 ggsave("../figures/libSizes.pdf", libPlot, height = 4, width = 4.5,
 	device = "pdf")
 
+# saveRDS(transOtus, "transOtus.rds")
+# transOtus <- readRDS("transOtus.rds")
+
 # update otuCols
 otuCols <- lapply(transOtus, function(x) names(x)[grepl("OTU", names(x))])
+
+
 #############################################
 ##### DATA READY FOR DIVERSITY ANALYSES #####
 #############################################
@@ -449,11 +459,21 @@ meanBetaSlopes <- allBootstraps[country != "Global",
 
 betaIsolation <- merge(isolationDat, meanBetaSlopes, by = "country")
 
-isolationMods <- lapply(unique(betaIsolation$modelType), function(x)
-	lmer(meanSlope ~ (1 + log10(region_area) | taxon) + log10(region_area),
+raMods <- lapply(unique(betaIsolation$modelType), function(x)
+	lm(meanSlope ~ log10(region_area) * taxon,
 		data = betaIsolation[modelType == x]))
 
-lapply(isolationMods, MuMIn::r.squaredGLMM)
+lapply(raMods, summary)
+
+saMods <- lapply(unique(betaIsolation$modelType), function(x)
+	lm(meanSlope ~ log10(sample_area) * taxon,
+		data = betaIsolation[modelType == x]))
+lapply(saMods, summary)
+
+mdMods <- lapply(unique(betaIsolation$modelType), function(x)
+	lm(meanSlope ~ log10(mainland_dist + 0.000001) * taxon,
+		data = betaIsolation[modelType == x]))
+lapply(mdMods, summary)
 
 predictIsolation <- data.table(
 	region_area = rep(seq(min(betaIsolation$region_area),
@@ -462,11 +482,7 @@ predictIsolation <- data.table(
 		each = length(seq(min(betaIsolation$region_area),
 			max(betaIsolation$region_area), 10000))))
 
-predictIsolation[, ":="(
-	Turnover = predict(isolationMods[[1]], newdata = predictIsolation),
-	Nestedness = predict(isolationMods[[2]], newdata = predictIsolation),
-	Dissimilarity = predict(isolationMods[[3]], newdata = predictIsolation))
-	]
+predictIsolation[, Turnover := predict(raMods[[1]], newdata = predictIsolation)]
 
 betaIsolation[, taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
 
@@ -477,9 +493,11 @@ regionAreaPlot <- ggplot() +
 		size = 4, alpha = 0.6) +
 	scale_x_log10() +
 	scale_shape_manual(values = 21:25) +
+	scale_fill_paletteer_d("ggsci::default_jama") +
+	scale_colour_paletteer_d("ggsci::default_jama") +
 	geom_line(data = predictIsolation,
 		aes(x = region_area, y  = Turnover, col = taxon), size = 1.2) +
-	labs(x = expression(Region~area~(km^2)), y = "Slope", col = "Taxon",
+	labs(x = expression(Biome~area~(km^2)), y = "Slope", col = "Taxon",
 		shape = "Location", fill = "Taxon") +
 	theme_bw() +
 	theme(axis.text = element_text(size = 16),
@@ -493,7 +511,7 @@ ggsave("../figures/Region_slopes.pdf", regionAreaPlot, height = 4, width = 6,
 	device = "pdf")
 
 # function to calculate prediction curve for range of data
-calcDecayFit <- function(x){
+calcDecayCurve <- function(x){
   xCoord <- seq(min(x$data[, 1]), max(x$data[, 1]),  0.01)
   pred <- 1 - (1 - x$a.intercept) * exp(-x$b.slope * xCoord)
   decayFit <- data.table(x = xCoord, y = pred)
@@ -501,9 +519,9 @@ calcDecayFit <- function(x){
 }
 
 # calc predicted for turnover models
-archSimFit <- lapply(archSimMods, calcDecayFit)
-bacSimFit <- lapply(bacSimMods, calcDecayFit)
-eukSimFit <- lapply(eukSimMods, calcDecayFit)
+archSimFit <- lapply(archSimMods, calcDecayCurve)
+bacSimFit <- lapply(bacSimMods, calcDecayCurve)
+eukSimFit <- lapply(eukSimMods, calcDecayCurve)
 
 # get into one df
 names(archSimFit) <- names(bacSimFit) <- names(eukSimFit) <- countries
@@ -529,12 +547,21 @@ setnames(distData, old = c("x", "X1...y"), new = c("temp", "turnover"))
 distData[, taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
 simFits[, taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
 
-# plot of turnover vs distance
-tvrPlot <- ggplot(distData,
-		aes(x = temp, y = turnover, col = country, fill = country,
-			shape = country)) +
-	geom_point(alpha = 0.2) +
+simpsonPal <- paletteer_d("ggsci::springfield_simpsons")
+pal <- simpsonPal[c(1, 15, 5, 11, 2)]
+
+test <- distData[, .(mean = mean(turnover), se = plotrix::std.error(turnover)), by = .(taxon, country, temp)]
+simFits[, se := NA]
+
+tvrPlot <- ggplot() +
+	geom_point(data = test, size = 2,
+	aes(x = temp, y = mean, col = country, fill = country, shape = country)) +
+	geom_errorbar(data = test,
+	aes(x = temp, y = mean, col = country, ymax = mean + se, ymin = mean - se),
+		width = 0.15) +
 	scale_shape_manual(values = 21:25) +
+	scale_colour_manual(values = pal) +
+	scale_fill_manual(values = pal) +
 	facet_wrap(~taxon, nrow = 1) +
 	geom_line(data = simFits, aes(x = temp, y = turnover, col = country), size = 1.2, show.legend = F) +
 	labs(x = expression(Temperature~difference~(degree*C)), col = "",
@@ -545,9 +572,7 @@ tvrPlot <- ggplot(distData,
 		strip.text.x = element_text(size = 14),
 		legend.text = element_text(size = 14),
 		legend.title = element_text(size = 14),
-		panel.grid = element_blank()) +
-	guides(colour = guide_legend(override.aes = list(alpha = 1, size = 4)),
-		fill = guide_legend(override.aes = list(alpha = 1, size = 4)))
+		panel.grid = element_blank())
 
 # create inset zoomed map of island sizes
 # get polygons that intersect with island coords
@@ -581,6 +606,8 @@ worldMap <- ggplot() +
 		stat = "sf_coordinates", nudge_y = -1 * st_coordinates(coords)[, 2],
 		size = 5) +
 	scale_shape_manual(values = 21:25) +
+	scale_colour_manual(values = pal) +
+	scale_fill_manual(values = pal) +
 	theme_void() +
 	theme(legend.position = "none")
 
@@ -596,13 +623,24 @@ ggsave("../figures/beta_diversity_panel.pdf", betaPanel, height = 6, width = 14,
 	device = "pdf")
 
 # reorder taxa
-allBootstraps[, taxon := factor(taxon, levels = c("Bacteria", "Archaea", "Eukarya"))]
+allBootstraps[, ":="(
+	taxon = factor(taxon, levels = c("Bacteria", "Archaea", "Eukarya")),
+	modelType = factor(modelType,
+		levels = c("Dissimilarity", "Turnover", "Nestedness")))]
+
+pal6 <- c(pal, simpsonPal[16])
+
+allBootstraps[, country := factor(
+	country,
+	levels = unique(country))]
 
 ##### DESIGN SI BETA FIGURES #####
 bootPlot <- ggplot(allBootstraps,
 		aes(x = betaSlope, fill = country, col = country, y = taxon)) +
-	geom_density_ridges(alpha = 0.5, scale = 0.9) +
+	geom_density_ridges(alpha = 0.5, scale = 0.95) +
 	labs(x = "Bootstrapped slopes", y = "") +
+	scale_colour_manual(values = pal6) +
+	scale_fill_manual(values = pal6) +
 	facet_wrap(~modelType, scales = "free", ncol = 2) +
 	theme_bw() +
 	theme(axis.text = element_text(size = 16),
@@ -613,12 +651,14 @@ bootPlot <- ggplot(allBootstraps,
 		strip.text.x = element_text(size = 14),
 		panel.grid = element_blank())
 
-ggsave("../figures/boostrapped_slopes.pdf", bootPlot, height = 7, width = 8,
+ggsave("../figures/bootstrapped_slopes.pdf", bootPlot, height = 6, width = 10,
 	device = "pdf")
 
 # pairwise plots of dissimilarity and nestedness against temp differences
-
+#################################################
 ########### alpha diversity analyses ############
+#################################################
+
 transOtus <- lapply(1:3, function(x)
 	transOtus[[x]][, ":="(
 		richness = hill_taxa(.SD, q = 0),
@@ -637,12 +677,7 @@ richnessMods <- lapply(transOtus, function(z) biogeoModels(z))
 
 richnessAICs <- lapply(richnessMods, AIC)
 
-pR2 <- function(x){
-	pseudoR2 <- 1 - (x$deviance / x$null.deviance)
-	return(pseudoR2)
-}
-
-richnessR2 <- lapply(richnessMods, pR2)
+richnessR2 <- lapply(richnessMods, Dsquared)
 
 # function to get temp gradients for each country to generate predictions
 getPredData <- function(x){
@@ -671,11 +706,17 @@ names(predData) <- names(obsRichness) <- c("Archaea", "Bacteria", "Eukarya")
 allAlphaPreds <- rbindlist(predData, idcol = "taxon")
 obsRichness <- rbindlist(obsRichness, idcol = "taxon")
 
-obsRichness[, taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
-allAlphaPreds[, taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
+obsRichness[,
+	taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
+allAlphaPreds[,
+	taxon := factor(taxon, levels = c("Eukarya", "Archaea", "Bacteria"))]
+
 richnessPlot <- ggplot(obsRichness, aes(x = temp_above_ambient, y = richness)) +
-	geom_point(aes(shape = country, fill = country, col = country), size = 3, alpha = 0.5) +
+	geom_point(aes(shape = country, fill = country, col = country), size = 3,
+		alpha = 0.5) +
 	scale_shape_manual(values = 21:25) +
+	scale_fill_manual(values = pal) +
+	scale_colour_manual(values = pal) +
 	geom_line(data = allAlphaPreds, aes(x = temp_above_ambient, y = predictedRichness, col = country), size = 1.2) +
 	facet_wrap(~taxon, scales = "free_y", ncol = 1) +
 	theme_bw() +
@@ -688,13 +729,16 @@ richnessPlot <- ggplot(obsRichness, aes(x = temp_above_ambient, y = richness)) +
 		panel.grid = element_blank(),
 		strip.text.x = element_text(size = 14))
 
+stdRichnessCoefs <- lapply(richnessMods, reghelper::beta, skip = "country")
+stdRichnessCoefs <- lapply(stdRichnessCoefs, function(x) as.data.table(x$coefficients))
+
 alphaCoefs <- data.table(
 	taxon = rep(c("Archaea", "Bacteria", "Eukarya"), each = 5),
 	country = rep(countries, times = 3),
-	intercept = unlist(lapply(richnessMods, function(x)
-		c(coef(x)[1], coef(x)[3:6] + coef(x)[1]))),
-	slope = unlist(lapply(richnessMods, function(x)
-		c(coef(x)[2], coef(x)[2] + coef(x)[7:10]))))
+	intercept = unlist(lapply(stdRichnessCoefs, function(x)
+		c(x$Estimate[1], x$Estimate[3:6] + x$Estimate[1]))),
+	slope = unlist(lapply(stdRichnessCoefs, function(x)
+		c(x$Estimate[2], x$Estimate[2] + x$Estimate[7:10]))))
 
 alphaBiogeo <- merge(alphaCoefs, isolationDat, by = "country")
 
@@ -705,20 +749,35 @@ alphaBiogeo <- melt(alphaBiogeo[, !c("Location", "max_dist")],
 
 # alpha diversity slope increases with increasing sampled area
 # could be a species area relationship?
-test <- lmer(value ~ (1 + log10(sample_area) | taxon) + log10(sample_area), data = alphaBiogeo[variable == "slope"])
+alphaSampleArea <- lm(value ~ taxon * log10(sample_area),
+	data = alphaBiogeo[variable == "slope"])
+alphaRegionArea <- lm(value ~ taxon * log10(region_area),
+	data = alphaBiogeo[variable == "slope"])
+alphaMainDist <- lm(value ~ taxon * log10(mainland_dist + 0.00001),
+	data = alphaBiogeo[variable == "slope"])
+
+sapply(list(alphaSampleArea, alphaRegionArea, alphaMainDist), AIC)
+sapply(list(alphaSampleArea, alphaRegionArea, alphaMainDist), RsquareAdj)
 
 sampleAreaPreds <- data.table(
 	sample_area = rep(
 		seq(min(isolationDat$sample_area), max(isolationDat$sample_area), 10), times = 3),
-	taxon = rep(c("Archaea", "Bacteria", "Eukarya"), each = length(seq(min(isolationDat$sample_area), max(isolationDat$sample_area), 10)), times = 3)
+	taxon = rep(c("Archaea", "Bacteria", "Eukarya"),
+		each = length(
+			seq(min(isolationDat$sample_area), max(isolationDat$sample_area), 10)),
+		times = 3)
 )
 
-sampleAreaPreds[, predictedSlope := predict(test, newdata = sampleAreaPreds, type = "response")]
+sampleAreaPreds[, predictedSlope := predict(
+	alphaSampleArea, newdata = sampleAreaPreds, type = "response")]
 
 richnessSlopes <- ggplot(alphaBiogeo[variable == "slope", ],
 		aes(x = sample_area, y = value, col = taxon)) +
+	geom_hline(yintercept = 0, linetype = 2, colour = "grey") +
 	geom_point(aes(shape = country, fill = taxon), size = 4, alpha = 0.5) +
 	scale_shape_manual(values = 21:25) +
+	scale_fill_paletteer_d("ggsci::default_jama") +
+	scale_colour_paletteer_d("ggsci::default_jama") +
 	geom_line(data = sampleAreaPreds,
 		aes(x = sample_area, y = predictedSlope), size = 1.2) +
 	scale_x_log10() +
@@ -732,7 +791,360 @@ richnessSlopes <- ggplot(alphaBiogeo[variable == "slope", ],
 
 alphaPanel <- richnessPlot + richnessSlopes + plot_layout(widths = c(0.4, 1)) & plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 20))
 
-ggsave("../figures/alpha_panel.pdf", alphaPanel, height = 6, width = 12, device = "pdf")
+ggsave("../figures/alpha_panel.pdf", alphaPanel, height = 6, width = 12,
+	device = "pdf")
+
+# function to back calculate area at which we expect no net change
+backCalc <- function(mod, y){
+	modCoefs <- as.data.table(coef(mod), keep.rownames = T)
+	taxonCoefs <- data.table(taxon = c("Archaea", "Bacteria", "Eukarya"),
+		intercept = c(modCoefs$V2[1], modCoefs$V2[1] + modCoefs$V2[2],
+			modCoefs$V2[1] + modCoefs$V2[3]),
+		slope = c(modCoefs$V2[4], modCoefs$V2[4] + modCoefs$V2[5],
+			modCoefs$V2[4] + modCoefs$V2[6]))
+	taxPreds <- taxonCoefs[, .(predicted_x = 10^((y - intercept)/slope)), by = taxon]
+	return(taxPreds)
+}
+
+# calculate site area at which there is 0 net change in relation to warming
+backCalc(alphaSampleArea, y = 0)
+
+biogeoModelsEntropy <- function(x){
+	model <- glm(
+		entropy ~ temp_above_ambient * country, data = x, family = Gamma(link = "log"))
+	return(model)}
+
+entropyMods <- lapply(transOtus, function(z) biogeoModelsEntropy(z))
+
+entropyAICs <- lapply(entropyMods, AIC)
+
+entropyR2 <- lapply(entropyMods, Dsquared)
+
+predData <- lapply(1:3, function(x)
+	predData[[x]][, predictedEntropy := predict(
+			entropyMods[[x]],
+			newdata = predData[[x]],
+			type = "response")
+	])
+
+obsEntropy <- lapply(transOtus, function(x)
+	x[, .(country, temp_above_ambient, entropy)])
+
+names(predData) <- names(obsEntropy) <- c("Archaea", "Bacteria", "Eukarya")
+
+allAlphaPreds <- rbindlist(predData, idcol = "taxon")
+obsEntropy <- rbindlist(obsEntropy, idcol = "taxon")
+
+entropyPlot <- ggplot(obsEntropy, aes(x = temp_above_ambient, y = entropy)) +
+	geom_point(aes(shape = country, fill = country, col = country), size = 3, alpha = 0.5) +
+	scale_shape_manual(values = 21:25) +
+	scale_fill_manual(values = pal) +
+	scale_colour_manual(values = pal) +
+	geom_line(data = allAlphaPreds, aes(x = temp_above_ambient, y = predictedEntropy, col = country), size = 1.2) +
+	facet_wrap(~taxon, scales = "free_y", ncol = 1) +
+	theme_bw() +
+	labs(x = expression(Temperature~above~ambient~(degree*C)),
+		y = "Entropy (Shannon diversity)") +
+	theme(axis.text = element_text(size = 16),
+		axis.title = element_text(size = 18),
+		legend.text = element_text(size = 14),
+		legend.title = element_blank(),
+		panel.grid = element_blank(),
+		strip.text.x = element_text(size = 14))
+
+stdEntropyCoefs <- lapply(entropyMods, reghelper::beta, skip = "country")
+stdEntropyCoefs <- lapply(stdEntropyCoefs, function(x)
+	as.data.table(x$coefficients))
+
+entropyCoefs <- data.table(
+	taxon = rep(c("Archaea", "Bacteria", "Eukarya"), each = 5),
+	country = rep(countries, times = 3),
+	intercept = unlist(lapply(stdEntropyCoefs, function(x)
+		c(x$Estimate[1], x$Estimate[3:6] + x$Estimate[1]))),
+	slope = unlist(lapply(stdEntropyCoefs, function(x)
+		c(x$Estimate[2], x$Estimate[2] + x$Estimate[7:10]))))
+
+entropyBiogeo <- merge(entropyCoefs, isolationDat, by = "country")
+
+entropyBiogeo <- melt(entropyBiogeo[, !c("Location", "max_dist")],
+	id.vars = c(
+		"country", "taxon", "region_area", "sample_area", "mainland_dist"),
+	measure.vars = c("slope", "intercept"))
+
+# alpha diversity slope increases with increasing sampled area
+# could be a species area relationship?
+entropySampleArea <- lm(value ~ taxon * log10(sample_area),
+	data = entropyBiogeo[variable == "slope"])
+entropyRegionArea <- lm(value ~ taxon * log10(region_area),
+	data = entropyBiogeo[variable == "slope"])
+entropyMainDist <- lm(value ~ taxon * log10(mainland_dist + 0.00001),
+	data = entropyBiogeo[variable == "slope"])
+
+sapply(list(entropySampleArea, entropyRegionArea, entropyMainDist), AIC)
+sapply(list(entropySampleArea, entropyRegionArea, entropyMainDist), RsquareAdj)
+
+sampleAreaPreds <- data.table(
+	sample_area = rep(
+		seq(min(isolationDat$sample_area), max(isolationDat$sample_area), 10), times = 3),
+	taxon = rep(c("Archaea", "Bacteria", "Eukarya"),
+		each = length(
+			seq(min(isolationDat$sample_area), max(isolationDat$sample_area), 10)),
+		times = 3)
+)
+
+sampleAreaPreds[, predictedEntSlope := predict(
+	entropySampleArea, newdata = sampleAreaPreds, type = "response")]
+
+entropySlopes <- ggplot(entropyBiogeo[variable == "slope", ],
+		aes(x = sample_area, y = value, col = taxon)) +
+	geom_point(aes(shape = country, fill = taxon), size = 4, alpha = 0.5) +
+	scale_shape_manual(values = 21:25) +
+	scale_fill_manual() +
+	scale_colour_manual(values = pal) +
+	geom_line(data = sampleAreaPreds,
+		aes(x = sample_area, y = predictedEntSlope), size = 1.2) +
+	scale_x_log10() +
+	labs(x = "Site area", y = "Slope") +
+	theme_bw() +
+	theme(axis.text = element_text(size = 16),
+		axis.title = element_text(size = 18),
+		legend.text = element_text(size = 14),
+		legend.title = element_blank(),
+		panel.grid = element_blank())
+### entropy slopes not determined by any specific biogeo vars
+
+biogeoModelsEven <- function(x){
+	model <- glm(
+		evenness ~ temp_above_ambient * country, data = x,
+		family = Gamma(link = "log"))
+	return(model)}
+
+evennessMods <- lapply(transOtus, function(z) biogeoModelsEven(z))
+
+evennessAICs <- lapply(evennessMods, AIC)
+
+evennessR2 <- lapply(evennessMods, Dsquared)
+
+predData <- lapply(1:3, function(x)
+	predData[[x]][, predictedEvenness := predict(
+			evennessMods[[x]],
+			newdata = predData[[x]],
+			type = "response")
+	])
+
+obsEvenness <- lapply(transOtus, function(x)
+	x[, .(country, temp_above_ambient, evenness)])
+
+names(predData) <- names(obsEvenness) <- c("Archaea", "Bacteria", "Eukarya")
+
+allAlphaPreds <- rbindlist(predData, idcol = "taxon")
+obsEvenness <- rbindlist(obsEvenness, idcol = "taxon")
+
+evennessPlot <- ggplot(obsEvenness, aes(x = temp_above_ambient, y = evenness)) +
+	geom_point(aes(shape = country, fill = country, col = country), size = 3, alpha = 0.5) +
+	scale_shape_manual(values = 21:25) +
+	scale_fill_manual(values = pal) +
+	scale_colour_manual(values = pal) +
+	geom_line(data = allAlphaPreds, aes(x = temp_above_ambient, y = predictedEvenness, col = country), size = 1.2) +
+	facet_wrap(~taxon, scales = "free_y", ncol = 1) +
+	theme_bw() +
+	labs(x = expression(Temperature~above~ambient~(degree*C)),
+		y = "Evenness (Simpsons Reciprocal Index 1/D)") +
+	theme(axis.text = element_text(size = 16),
+		axis.title = element_text(size = 18),
+		legend.text = element_text(size = 14),
+		legend.title = element_blank(),
+		panel.grid = element_blank(),
+		strip.text.x = element_text(size = 14))
+
+evenEntPanel <- entropyPlot + evennessPlot +
+	plot_layout(guides = "collect") &
+	plot_annotation(tag_levels = "A") &
+	theme(plot.tag = element_text(size = 20))
+
+ggsave("../figures/Evenness_entropy_panel.pdf", evenEntPanel, height = 8,
+	width = 8, device = "pdf")
+
+lapply(richnessMods, anova, test = "LR")
+lapply(entropyMods, anova, test = "LR")
+lapply(evennessMods, anova, test = "LR")
+
+stdEvennessCoefs <- lapply(evennessMods, reghelper::beta, skip = "country")
+stdEvennessCoefs <- lapply(stdEvennessCoefs, function(x)
+	as.data.table(x$coefficients))
+
+evennessCoefs <- data.table(
+	taxon = rep(c("Archaea", "Bacteria", "Eukarya"), each = 5),
+	country = rep(countries, times = 3),
+	intercept = unlist(lapply(stdEvennessCoefs, function(x)
+		c(x$Estimate[1], x$Estimate[3:6] + x$Estimate[1]))),
+	slope = unlist(lapply(stdEvennessCoefs, function(x)
+		c(x$Estimate[2], x$Estimate[2] + x$Estimate[7:10]))))
+
+evennessBiogeo <- merge(evennessCoefs, isolationDat, by = "country")
+
+evennessBiogeo <- melt(evennessBiogeo[, !c("Location", "max_dist")],
+	id.vars = c(
+		"country", "taxon", "region_area", "sample_area", "mainland_dist"),
+	measure.vars = c("slope", "intercept"))
+
+# test evenness slopes against isolation vars
+evennessSampleArea <- lm(value ~ taxon * log10(sample_area),
+	data = evennessBiogeo[variable == "slope"])
+evennessRegionArea <- lm(value ~ taxon * log10(region_area),
+	data = evennessBiogeo[variable == "slope"])
+evennessMainDist <- lm(value ~ taxon * log10(mainland_dist + 0.00001),
+	data = evennessBiogeo[variable == "slope"])
+
+sapply(list(evennessSampleArea, evennessRegionArea, evennessMainDist), AIC)
+sapply(list(evennessSampleArea, evennessRegionArea, evennessMainDist), RsquareAdj)
+
+regionAreaPredsEvenness <- data.table(
+	region_area = rep(
+		seq(min(isolationDat$region_area), max(isolationDat$region_area), 1000), times = 3),
+	taxon = rep(c("Archaea", "Bacteria", "Eukarya"),
+		each = length(
+			seq(min(isolationDat$region_area), max(isolationDat$region_area), 1000)),
+		times = 3)
+)
+
+regionAreaPredsEvenness[, predictedSlope := predict(
+	evennessRegionArea, newdata = regionAreaPredsEvenness, type = "response")]
+
+evennessSlopes <- ggplot(evennessBiogeo[variable == "slope", ],
+		aes(x = region_area, y = value, col = taxon)) +
+	geom_hline(yintercept = 0, linetype = 2, colour = "grey") +
+	geom_point(aes(shape = country, fill = taxon), size = 4, alpha = 0.5) +
+	scale_shape_manual(values = 21:25) +
+	geom_line(data = regionAreaPredsEvenness,
+		aes(x = region_area, y = predictedSlope), size = 1.2) +
+	scale_x_log10() +
+	labs(x = expression(Region~area~(km^2)), y = "Slope") +
+	theme_bw() +
+	theme(axis.text = element_text(size = 16),
+		axis.title = element_text(size = 18),
+		legend.text = element_text(size = 14),
+		legend.title = element_blank(),
+		panel.grid = element_blank())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+########################## Taxonomy analysis ###################################
+taxCols <- c("V1", "phylum", "class", "order", "family", "genus")
+archTax <- allOtus[[1]][, .SD, .SDcols = taxCols]
+bacTax <- allOtus[[2]][, .SD, .SDcols = taxCols]
+
+setnames(archTax, old = "V1", new = "OTU")
+setnames(bacTax, old = "V1", new = "OTU")
+
+# convert to relative abundance
+relAbunds <- lapply(1:2, function(x)
+	transOtus[[x]][, otuCols[[x]] := .SD/libSize, .SDcols = otuCols[[x]]])
+
+# aggregate transOtus at the genus level
+archMethanogens <- archTax[grepl("Methano", genus), ]
+bacMethanotrophs <- bacTax[grepl("Methylo", genus), ]
+
+# remove any that are lost during rarefaction
+archMethanogens <- archMethanogens[OTU %in% colnames(transOtus[[1]])]
+bacMethanotrophs <- bacMethanotrophs[OTU %in% colnames(transOtus[[2]])]
+
+# get total rel abund of all methanotrophs/gens
+relAbunds[[1]][, totalMethanogens := rowSums(.SD),
+	.SDcols = archMethanogens$OTU]
+relAbunds[[2]][, totalMethanotrophs := rowSums(.SD),
+	.SDcols = bacMethanotrophs$OTU]
+
+# get rel abunds of each methanogen/methanotroph
+relAbunds[[1]] <- relAbunds[[1]][,
+	unique(archMethanogens$genus) := lapply(
+		unique(archMethanogens$genus),
+		function(x)
+		relAbunds[[1]][, rowSums(.SD), .SDcols = archMethanogens[genus == x, OTU]])]
+
+relAbunds[[2]] <- relAbunds[[2]][,
+	unique(bacMethanotrophs$genus) := lapply(
+		unique(bacMethanotrophs$genus),
+		function(x)
+		relAbunds[[2]][, rowSums(.SD),
+			.SDcols = bacMethanotrophs[genus == x, OTU]])]
+
+# mvabund analysis of methanotrophs/methanogens
+meltMethanogens <- melt(
+	relAbunds[[1]][, .SD,
+		.SDcols = c("country", "temp_above_ambient", unique(archMethanogens$genus))],
+	id.vars = c("country", "temp_above_ambient"))
+
+# classify methanogenesis pathway
+meltMethanogens[, pathway := "Hydrogenotrophic"]
+meltMethanogens[variable %in% c("Methanothrix", "Methanosarcina"),
+	pathway := "Acetoclastic"]
+meltMethanogens[variable %in% c(
+	"Methanolobus", "Methanomethylovorans", "Methanosphaera"),
+	pathway := "Methylotrophic"]
+meltMethanogens[grep("unclassified", variable), pathway := NA]
+
+relAbunds[[1]][, hydrogenotrophic := rowSums(.SD)/totalMethanogens,
+	.SDcols = as.character(
+		meltMethanogens[pathway == "Hydrogenotrophic", unique(variable)])]
+relAbunds[[1]][, acetoclastic := rowSums(.SD)/totalMethanogens,
+	.SDcols = as.character(
+		meltMethanogens[pathway == "Acetoclastic", unique(variable)])]
+relAbunds[[1]][, methylotrophic := rowSums(.SD)/totalMethanogens,
+	.SDcols = as.character(
+		meltMethanogens[pathway == "Methylotrophic", unique(variable)])]
+
+identifiedMethanogens <- as.character(
+	meltMethanogens[!is.na(pathway), unique(variable)])
+
+methanoMvabund <- manyglm(methanogenMat ~ country * temp_above_ambient, data = relAbunds[[1]], family = binomial())
+
+
+
+
+
+
 
 
 
@@ -807,31 +1219,6 @@ ggsave("../figures/mainland_dist.pdf", mainDist, height = 4, width = 12,
 
 
 
-# function to calculate prediction curve for range of data
-calcDecayFit <- function(x){
-  xCoord <- seq(min(x$data[, 1]), max(x$data[, 1]),  0.005)
-  pred <- 1 - (1 - x$a.intercept) * exp(-x$b.slope * xCoord)
-  decayFit <- data.table(x = xCoord, y = pred)
-  return(decayFit)
-}
-
-
-
-allDists <- lapply(1:3, function(x)
-	cbind(betaDists[[x]], tempDists[[x]][, !"country"]))
-
-lapply(allDists, setnames, old = "V1", new = "tempDiff")
-
-# calculate relative contribution of turnover to total beta diversity
-lapply(allDists, function(x) x[, rel_tvr := beta.sim/beta.sor])
-
-globalSim <- lapply(allDists, function(x)
-	decay.model(as.dist(x$beta.sim),
-							as.dist(x$tempDiff),
-							model.type = "exponential",
-							y.type = "dissimilarities"))
-globalNes <-
-globalBeta <-
 
 
 
@@ -851,30 +1238,6 @@ globalBeta <-
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-# create cols for sp richness, library size, and taxon, ready for plotting
-transOtus <- lapply(1:3, function(x)
-	transOtus[[x]][, c("hill_1", "hill_2", "hill_3", "taxon") := list(
-		hill_taxa(.SD, q = 0), hill_taxa(.SD, q = 1), hill_taxa(.SD, q = 2),
-		, rep(names(transOtus)[x], times = nrow(transOtus[[x]]))),
-		.SDcols =
-#
-
-# calculate rarefied richness to verify results
-transOtus <- lapply(1:3, function(x)
-	transOtus[[x]][, rareRich := round(rarefy(.SD, sample = min(libSize))),
-	.SDcols = otuCols[[x]]])
 
 
 
@@ -922,71 +1285,6 @@ contPlot <- ggplot(contrDat, aes(x = taxon, y = value, col = country)) +
 			legend.title = element_blank())
 
 ggsave("../figures/nestedness_turnover.pdf", contPlot, width = 9, height = 4,
-		device = "pdf")
-
-# repeat temperature matrices for mantel tests
-tm <- rep(tempMatrices, each = 3)
-
-# apply decay models to all Sorensen matrices
-sorMats <- grep("sor", names(bm))
-
-decayModels <- mclapply(sorMats, mc.cores = mc, function(x)
-	decay.model(bm[[x]], tm[[x]], model.type = "exp", y.type = "dissim",
-		perm = 1000))
-
-	# calculate global pairwise dissimilarities
-	# Overall community turnover
-	rareTabs <- lapply(1:3, function(x)
-		transOtus[[x]][, rrarefy(.SD, sample = min(libSize)), .SDcols = otuCols[[x]]])
-
-	# make rarefied tables binary
-	rareTabs <- lapply(rareTabs, makeBinary)
-
-	# compute overall B-diversity matrices for each taxon
-	betaTabs <- lapply(rareTabs, beta.pair)
-
-	# extract total dissim matrix only
-	betaTabs <-  lapply(betaTabs, function(x) x$beta.sim)
-
-	# run NMDS analyses
-	betaNMDS <- lapply(betaTabs, metaMDS, trymax = 250, autotransform = F)
-
-	# get stres vals
-	lapply(betaNMDS, function(x) x$stress)
-
-	# add scores back to otu tabs
-	transOtus <- lapply(1:3, function(x) transOtus[[x]][, ":="(
-		NMDS1 = scores(betaNMDS[[x]])[, 1],
-		NMDS2 = scores(betaNMDS[[x]])[, 2])])
-
-	# make plots
-	nmdsPlots <- lapply(transOtus, function(a)
-		ggplot(a, aes(x = NMDS1, y = NMDS2, col = temp, shape = country)) +
-			geom_point(size = 5, alpha = 0.7) +
-			labs(x = "NMDS 1", y = "NMDS 2", col = "Temperature", shape = "Site") +
-			theme_bw() +
-			scale_shape_manual(values = c(15, 17, 18, 19, 8)) +
-			scale_color_viridis(option = "magma", begin = 0, end = 0.8,
-				breaks = c(5, 15, 25), labels = c("5°C", "15°C", "25°C")) +
-			theme(axis.text = element_text(size = 16),
-				axis.title = element_text(size = 18),
-				panel.grid = element_blank(),
-				legend.text = element_text(size = 14),
-				legend.title = element_text(size = 14),
-				legend.box = "horizontal",
-				aspect.ratio = 1)
-				)
-
-	nmdsLegend <- get_legend(nmdsPlots[[1]])
-
-	nmdsPlots <- lapply(nmdsPlots, function(x) x + theme(legend.position = "none"))
-
-	# arrange panel plot
-	nmdsPanel <- plot_grid(nmdsPlots[[1]], nmdsPlots[[2]], nmdsPlots[[3]],
-		nmdsLegend, nrow = 2, labels = c("A", "B", "C", ""), label_size = 18,
-		align = "hv", axis = "l")
-
-	ggsave("../figures/Figure_2.pdf", nmdsPanel, height = 7, width = 8,
 		device = "pdf")
 
 	#### multivariate abundance modelling
@@ -1160,30 +1458,6 @@ longPred <- rbindlist(predData)
 # exponentiate predictions back to response scale
 longPred[, value := exp(value)]
 
-richnessPlots <- ggplot(longPred,
-		aes(x = temp, y = value/1000, col = country)) +
-	geom_ribbon(
-		aes(ymin = lowCI/1000, ymax = uppCI/1000, fill = country,
-			col = country), alpha = 0.3, linetype = 2, colour = NA) +
-	geom_point(data = richRates,
-		aes(x = temp, y = value, col = country), size = 3, alpha = 0.6) +
-	scale_color_viridis(discrete = T, begin = 0.8, end = 0) +
-	scale_fill_viridis(discrete = T, begin = 0.8, end = 0) +
-	coord_cartesian(xlim = c(0, 30)) +
-	geom_line() +
-	theme_bw() +
-	labs(x = "Stream temperature (°C)", y = "Normalised OTU richness") +
-	facet_grid(taxon~country, scales = "free_y") +
-	theme(legend.position = "none",
-		aspect.ratio = 1,
-		panel.grid = element_blank(),
-		axis.text = element_text(size = 16),
-		axis.title = element_text(size = 18),
-		strip.text = element_text(size = 14))
-
-ggsave("../figures/Figure_4.pdf", richnessPlots, height = 6, width = 10,
-	device = "pdf")
-
 # Do evenness models
 evenNone <- lapply(transOtus, function(x)
 	glm(hill_3 ~ country + temp + I(temp^2), data = x,
@@ -1233,21 +1507,6 @@ modDev[, Interaction := factor(Interaction, levels = levels(Interaction),
 	labels = c(
 		"No site interaction", "Minimal site interaction",
 		"Full site interaction"))]
-
-devPlot <- ggplot(modDev,
-		aes(x = Interaction, y = Explained_deviance, group = model, col = model)) +
-	geom_point() +
-	geom_line() +
-	facet_wrap(~ Taxon, ncol = 1) +
-	labs(x = "Model", y = "Explained\ndeviance", col = NULL) +
-	theme_bw() +
-	theme(axis.text = element_text(size = 16),
-		axis.title = element_text(size = 18),
-		axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 0.5),
-		panel.grid = element_blank(),
-		legend.text = element_text(size = 14),
-		strip.text.x = element_text(size = 14))
-
 
 evenModelFits <- merge(evenAic, evenDev, by = c("Taxon", "Interaction"))
 
@@ -1301,18 +1560,4 @@ evennessPlots <- ggplot(evenPred,
 			strip.text = element_text(size = 14))
 
 ggsave("../figures/Figure_5.pdf", evennessPlots, height = 6, width = 10,
-	device = "pdf")
-
-# create dataframe of approximate study sites
-coords <- data.table(lat = c(64.3, 69.55, 79.38, 65, 55.89),
-	long = c(-21.1, -53.52, 13.43, -150.63, 159.67),
-	site = c("Iceland", "Greenland", "Svalbard", "Alaska", "Kamchatka"))
-
-# reorder factor levels
-coords <- coords[order(site), ]
-
-# get international borders
-
-
-ggsave("../figures/Figure_S1.pdf", siteMap, height = 5, width = 8,
 	device = "pdf")

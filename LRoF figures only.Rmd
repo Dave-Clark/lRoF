@@ -1,0 +1,146 @@
+---
+title: "LRoF figures"
+author: "Michelle"
+date: "01/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+rm(list=ls())
+graphics.off()
+library(vegan)
+library(tidyverse)
+library(cowplot)
+library(reshape2)
+library(PlotSvalbard)
+library(rphylopic)
+setwd("~/Dropbox/RFILES/RoF R Files")
+```
+
+```{r }
+#prepare factors etc for figures
+envdata=read.csv("envdata_lrof_2020.csv", header=TRUE)
+env <- envdata[-c(15,16,17,18,19), ]
+grp <- as_factor(env$Location)
+
+#colours/shapes for sites
+colours = c("Alaska" = "#E69F00", "Disko Island" = "#56B4E9", "Hengill_12" = "#009E73", "Svalbard" = "#CC79A7", "Kamchatka" = "#D55E00")
+shapes = c("Alaska" = 15, "Disko Island" = 17, "Hengill_12" = 19, "Svalbard" = 23, "Kamchatka" = 25)
+
+#colours for temp
+rbPal <- colorRampPalette(c('blue','orange','red'))
+env$Col <- rbPal(10)[as.numeric(cut(env$Temp.above.ambient,breaks = 10))]
+
+#pics 
+dia  <- image_data("4924b6bd-cfb8-4d60-a32a-442d02afbe85", size = "512")[[1]]
+chiro <- image_data("af2b4c88-b61d-4343-898a-69741d883a54", size = "512")[[1]]
+
+```
+
+```{r }           
+#Supporting information
+#heatmap
+pdf("SI_fig 1a.pdf", width = 6, height = 6)
+env1 <- env %>% select (Temp.above.ambient, pH, Conductivity, Mainland, Total.N, NDVI, Latitude, max_dist, area, region_area)
+df_heat <- round(cor(env1),2)
+melted_heat <- melt(df_heat)
+ggplot(data = melted_heat, aes(x=Var1, y=Var2, fill=value)) + 
+geom_tile(colour="white")+
+scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+midpoint = 0, limit = c(-1,1), space = "Lab", 
+name="Pearson\nCorrelation") +
+theme_minimal()+ 
+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+coord_fixed()
+dev.off()
+
+#PCA
+pdf("SI_fig 1b.pdf", width = 6, height = 6)
+nona <- data.frame(na.omit(env1))
+efpca <- rda(nona) 
+fit <- envfit(efpca, nona, permu = 999)
+par(mar=c(4,4,1,1))
+  ordiplot(efpca, type="n")
+plot(fit, col="black")
+dev.off()
+
+#correlations
+pH <- ggplot(env, aes(x=Stream.temperature, y=pH)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab("") + ylab("pH") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + theme(legend.position = "none") 
+
+Cond <- ggplot(env, aes(x=Stream.temperature, y=Conductivity)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab("") + ylab("Conductivity") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + theme(legend.position = "none") 
+
+NDVI <- ggplot(env, aes(x=Stream.temperature, y=NDVI)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab("") + ylab("NDVI") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + theme(legend.position = "top") + scale_fill_manual(values = colours) + theme(legend.position = "none") + scale_shape_manual(values=shapes) 
+
+Reg <- ggplot(env, aes(x=Stream.temperature, y=region_area)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab("") + ylab("Ecoregion area") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + theme(legend.position = "top") + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) +  theme(legend.position = "none") 
+
+Area <- ggplot(env, aes(x=Stream.temperature, y=area)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab("") + ylab("Sampled area") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + theme(legend.position = "top") + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + theme(legend.position = "none") 
+
+Iso <- ggplot(env, aes(x=Stream.temperature, y=Mainland)) +  geom_point(aes(colour = Location, shape=Location, fill=Location), size = 3, alpha = 0.8) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+xlab(expression(paste("Stream temperature ("^"o","C)"))) + ylab("Isolation") + theme(panel.spacing = unit(.5, 'pt')) + scale_colour_manual(values = colours) + theme(legend.position = "bottom") + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + guides(colour=guide_legend(nrow=3)) + theme(legend.title = element_blank())
+
+pdf("SI_fig 2.pdf", width = 3, height = 15)
+plot_grid(pH, Cond, NDVI, Reg, Area, Iso, ncol = 1, labels = c("a", "b", "c", "d", "e", "f"), rel_heights = c(1,1,1,1,1,1.6), align="v")
+dev.off()
+```
+
+```{r}
+#Fig 1 - beta-div
+map=read.csv("RoF_regions.csv", header=TRUE)
+df=read.csv("beta_div_all_with hengill 2012.csv", header=TRUE)
+df$Nest [df$Nest== 1] <- 0.99999999
+df$Turn [df$Turn== 1] <- 0.99999999
+df$Dis [df$Dis== 1] <- 0.99999999
+df$Dis [df$Dis== 0] <- 0.000000001
+df$Turn [df$Turn== 0] <- 0.000000001
+df_NA <- subset(df, Location !="Null")
+diva_in <- subset(df_NA, Group =="Invertebrate")
+diva_di <- subset(df_NA, Group =="Diatom")
+
+MAP1 <-  basemap("panarctic", limits = c(4*10^6, -4*10^6, 4*10^6, -4*10^6)) +
+geom_point(data = map, aes(x = Long, y = Lat, 
+    shape=Location, colour=Location, fill=Location), size = 6) + scale_colour_manual(values = colours) + scale_shape_manual(values=shapes)  + scale_fill_manual(values = colours) + theme(legend.position="top") + theme(plot.margin=unit(c(1,1,1,1),"cm")) + theme(legend.title = element_blank()) + guides(colour=guide_legend(nrow=2))+ theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+#here my slopes are a lot steeper than those produced by the decay model. Why?! Formula is the same (I think)
+beta <- ggplot(df_NA, aes(x=Temp, y=Turn, colour = Location, fill = Location, shape=Location), alpha=0.8) + geom_point() + geom_smooth(formula = y ~ x, method = "glm", size=1, method.args = list(family = gaussian(link = 'log')), level=0) + theme_bw (base_size = 15) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+xlab(expression(paste("Temperature difference ("^"o","C)"))) + ylab("Turnover") + scale_colour_manual(values = colours) + theme(legend.position = "none") + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + ylim(0,1) + facet_wrap(~Group)
+
+#bootstrapped slopes
+slopes=read.csv("slopes.csv", header=TRUE)
+slopes_1 <- transform(slopes, Location = reorder(Location, NDVI))
+
+slopes <- ggplot(slopes_1, aes(x=Location, y=slope, colour = Location, fill=Location)) + geom_boxplot(notch=TRUE) +
+theme_bw () + xlab("Location") + ylab("Slope")  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +  ylim(-0.1, 0.5) + theme(legend.position = "none") + geom_segment(aes(x = 1, y = 0.45, xend = 5, yend = 0.45), arrow=arrow(length = unit(0.2, "cm")), colour="black", size=1) + annotate(geom="text", x=3, y=0.48, label="Increasing NDVI", color="black") + scale_colour_manual(values = colours) + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes) + facet_wrap(~group)
+
+plot_grid(MAP1, beta, slopes, ncol=1, labels = c("a", "b", "c"))
+```
+
+```{r}
+#alpha div / fig 2
+env$i_rich.log = log(env$inv_rich_lower_rare+1)
+env$d_rich.log = log(env$dia_rich+1)
+
+inv_1 <- ggplot(env, aes(x=Temp.above.ambient, y=i_rich.log)) + geom_smooth(aes(colour = Location, fill=Location), method = "glm", size=1, level=0)  + geom_point(aes(colour = Location, fill=Location, shape=Location), size = 3, alpha = 0.5) +  geom_smooth(method = "glm", size=1, level=0.9, colour="black", linetype = "dashed") + theme_bw (base_size = 10) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) + xlab(expression(paste("Temperature above ambient ("^"o","C)"))) + ylab("log(richness+1)") + theme(panel.spacing = unit(.5, 'pt')) + theme(legend.position = "none") + add_phylopic(chiro) + scale_colour_manual(values = colours) + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes)
+
+dia_1 <- ggplot(env, aes(x=Temp.above.ambient, y=d_rich.log)) + geom_smooth(aes(colour = Location, fill=Location), method = "glm", size=1, level=0)  + geom_point(aes(colour = Location, fill=Location, shape=Location), size = 3, alpha = 0.5) +  geom_smooth(method = "glm", size=1, level=0.9, colour="black", linetype = "dashed") + theme_bw (base_size = 10) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) + xlab(expression(paste("Temperature above ambient ("^"o","C)"))) + ylab("log(richness+1)") + theme(panel.spacing = unit(.5, 'pt')) + theme(legend.position = "none") + add_phylopic(dia) + scale_colour_manual(values = colours) + scale_fill_manual(values = colours) + scale_shape_manual(values=shapes)
+
+plot_grid(inv_1, dia_1, labels=c('a', 'b'), ncol=2)
+```
+
+
